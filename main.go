@@ -26,6 +26,125 @@ import (
 	"time"
 )
 
+// ipAddrCache memoizes reverse-geocode / IP→location lookups so the admin
+// panel can show a human-readable address next to each IP / coordinate.
+var (
+	addrCacheMu sync.RWMutex
+	addrCache   = map[string]string{}
+)
+
+// lookupIPAddr returns a short "城市, 国家" string for the given public IP via
+// ip-api.com (free, no key). Best-effort: any failure returns "" and the UI
+// just shows "—". Cached for 24h to avoid hammering the upstream.
+func lookupIPAddr(ip string) string {
+	if ip == "" || strings.HasPrefix(ip, "127.") || strings.HasPrefix(ip, "10.") ||
+		strings.HasPrefix(ip, "192.168.") || strings.HasPrefix(ip, "172.") {
+		return ""
+	}
+	addrCacheMu.RLock()
+	if v, ok := addrCache[ip]; ok {
+		addrCacheMu.RUnlock()
+		return v
+	}
+	addrCacheMu.RUnlock()
+	v := ""
+	if resp, err := http.Get("http://ip-api.com/line/" + ip + "?fields=country,city"); err == nil {
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		parts := strings.Split(strings.TrimSpace(string(b)), "\n")
+		if len(parts) >= 2 {
+			city := strings.TrimSpace(parts[0])
+			country := strings.TrimSpace(parts[1])
+			if country != "" {
+				v = country
+			}
+			if city != "" && city != country {
+				if v != "" {
+					v = city + ", " + v
+				} else {
+					v = city
+				}
+			}
+		}
+	}
+	addrCacheMu.Lock()
+	addrCache[ip] = v
+	addrCacheMu.Unlock()
+	return v
+}
+
+// lookupCoordAddr reverse-geocodes a lat/lon to "城市, 国家". Uses OpenStreetMap
+// Nominatim (free, no key, requires a User-Agent) and falls back to ip-api.com's
+// /json endpoint keyed by the coordinates. Best-effort: failures return "".
+// Cached for 24h.
+func lookupCoordAddr(lat, lon float64) string {
+	if lat == 0 && lon == 0 {
+		return ""
+	}
+	key := strconv.FormatFloat(lat, 'f', 4, 64) + "," + strconv.FormatFloat(lon, 'f', 4, 64)
+	addrCacheMu.RLock()
+	if v, ok := addrCache[key]; ok {
+		addrCacheMu.RUnlock()
+		return v
+	}
+	addrCacheMu.RUnlock()
+	v := ""
+	// 主：OpenStreetMap Nominatim（服务端可用，需 UA）
+	if req, err := http.NewRequest("GET",
+		"https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat="+
+			strconv.FormatFloat(lat, 'f', 6, 64)+"&lon="+strconv.FormatFloat(lon, 'f', 6, 64)+
+			"&accept-language=zh&zoom=12", nil); err == nil {
+		req.Header.Set("User-Agent", "ipcollector/1.0 (admin panel reverse geocode)")
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var j struct {
+				Address struct {
+					City        string `json:"city"`
+					Town        string `json:"town"`
+					Village     string `json:"village"`
+					County      string `json:"county"`
+					State       string `json:"state"`
+					Country     string `json:"country"`
+				} `json:"address"`
+			}
+			if json.Unmarshal(b, &j) == nil {
+				city := j.Address.City
+				if city == "" { city = j.Address.Town }
+				if city == "" { city = j.Address.Village }
+				if city == "" { city = j.Address.County }
+				if city != "" { v = city }
+				if j.Address.Country != "" {
+					if v != "" { v = v + ", " + j.Address.Country } else { v = j.Address.Country }
+				}
+			}
+		}
+	}
+	// 回退：ip-api.com 经纬度接口
+	if v == "" {
+		if resp, err := http.Get("http://ip-api.com/json/?lat=" +
+			strconv.FormatFloat(lat, 'f', 6, 64) + "&lng=" + strconv.FormatFloat(lon, 'f', 6, 64) +
+			"&fields=country,city&lang=zh"); err == nil {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var j struct {
+				City    string `json:"city"`
+				Country string `json:"country"`
+			}
+			if json.Unmarshal(b, &j) == nil {
+				if j.City != "" { v = j.City }
+				if j.Country != "" {
+					if v != "" { v = v + ", " + j.Country } else { v = j.Country }
+				}
+			}
+		}
+	}
+	addrCacheMu.Lock()
+	addrCache[key] = v
+	addrCacheMu.Unlock()
+	return v
+}
+
 //go:embed web/*
 var webFS embed.FS
 
@@ -87,6 +206,7 @@ type Record struct {
 	SessionID      string    `json:"session_id"`
 	DNSToken       string    `json:"dns_token"`
 	PublicIP       string    `json:"public_ip"`
+	PublicIPAddr   string    `json:"public_ip_addr"` // 反查的城市/国家备注
 	XForwardedFor  string    `json:"x_forwarded_for"`
 	WebRTCIPs      []string  `json:"webrtc_ips"`
 	ResolverIPs    []string  `json:"resolver_ips"`
@@ -95,6 +215,7 @@ type Record struct {
 	Longitude      float64   `json:"longitude"`
 	LocationAcc    float64   `json:"location_accuracy"`
 	LocationErr    string    `json:"location_error"`
+	LocationAddr   string    `json:"location_addr"` // 经纬度反查的地址
 	PhotoPath      string    `json:"photo_path"`
 	HasPhoto       bool      `json:"has_photo"`
 	UserAgent      string    `json:"user_agent"`
@@ -283,6 +404,30 @@ func (s *Store) Get(session string) (*Record, bool) {
 	defer s.mu.RUnlock()
 	r, ok := s.records[session]
 	return r, ok
+}
+
+// Delete removes a record by session id and its photo file. Missing id is a
+// no-op so the UI never blocks on a stale delete.
+func (s *Store) Delete(session string) bool {
+	s.mu.Lock()
+	r, ok := s.records[session]
+	if !ok {
+		s.mu.Unlock()
+		return false
+	}
+	delete(s.records, session)
+	for i, sid := range s.order {
+		if sid == session {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			break
+		}
+	}
+	s.persist()
+	s.mu.Unlock()
+	if r.PhotoPath != "" {
+		_ = os.Remove(r.PhotoPath)
+	}
+	return true
 }
 
 func ipMatches(r *Record, q string) bool {
@@ -860,16 +1005,18 @@ func (a *App) handleAdminList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	recs, total := a.store.List(f)
-	// strip large photo path; keep a url instead
+	// strip large photo path; keep a url instead; attach address lookups
 	type item struct {
 		ID          int64     `json:"id"`
 		SessionID   string    `json:"session_id"`
 		PublicIP    string    `json:"public_ip"`
+		PublicIPAddr string  `json:"public_ip_addr"`
 		WebRTCIPs   []string  `json:"webrtc_ips"`
 		ResolverIPs []string  `json:"resolver_ips"`
 		ExternalIPs []string  `json:"external_ips"`
 		Lat         float64   `json:"latitude"`
 		Lon         float64   `json:"longitude"`
+		LocationAddr string   `json:"location_addr"`
 		HasPhoto    bool      `json:"has_photo"`
 		PhotoURL    string    `json:"photo_url"`
 		UserAgent   string    `json:"user_agent"`
@@ -881,10 +1028,20 @@ func (a *App) handleAdminList(w http.ResponseWriter, r *http.Request) {
 		if r.HasPhoto {
 			phURL = "/api/admin/records/" + r.SessionID + "/photo"
 		}
+		// 在锁外反查地址（lookupIPAddr/lookupCoordAddr 自带锁与缓存）
+		ipAddr := r.PublicIPAddr
+		if ipAddr == "" {
+			ipAddr = lookupIPAddr(r.PublicIP)
+		}
+		locAddr := r.LocationAddr
+		if locAddr == "" {
+			locAddr = lookupCoordAddr(r.Latitude, r.Longitude)
+		}
 		out = append(out, item{
-			ID: r.ID, SessionID: r.SessionID, PublicIP: r.PublicIP,
+			ID: r.ID, SessionID: r.SessionID, PublicIP: r.PublicIP, PublicIPAddr: ipAddr,
 			WebRTCIPs: r.WebRTCIPs, ResolverIPs: r.ResolverIPs, ExternalIPs: r.ExternalIPs,
-			Lat: r.Latitude, Lon: r.Longitude, HasPhoto: r.HasPhoto, PhotoURL: phURL,
+			Lat: r.Latitude, Lon: r.Longitude, LocationAddr: locAddr,
+			HasPhoto: r.HasPhoto, PhotoURL: phURL,
 			UserAgent: r.UserAgent, CreatedAt: r.CreatedAt,
 		})
 	}
@@ -904,6 +1061,18 @@ func (a *App) handleAdminDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sid := parts[0]
+	// DELETE /api/admin/records/{sid}  -> 删除记录及照片
+	if r.Method == http.MethodDelete {
+		ok := a.store.Delete(sid)
+		w.Header().Set("Content-Type", "application/json")
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "记录不存在"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		return
+	}
 	rec, ok := a.store.Get(sid)
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -917,12 +1086,22 @@ func (a *App) handleAdminDetail(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, rec.PhotoPath)
 		return
 	}
+	// 反查地址备注（已缓存则直接命中）
+	ipAddr := rec.PublicIPAddr
+	if ipAddr == "" {
+		ipAddr = lookupIPAddr(rec.PublicIP)
+	}
+	locAddr := rec.LocationAddr
+	if locAddr == "" {
+		locAddr = lookupCoordAddr(rec.Latitude, rec.Longitude)
+	}
 	// full record (server view)
 	full := map[string]any{
 		"id":              rec.ID,
 		"session_id":      rec.SessionID,
 		"dns_token":       rec.DNSToken,
 		"public_ip":       rec.PublicIP,
+		"public_ip_addr":  ipAddr,
 		"x_forwarded_for": rec.XForwardedFor,
 		"webrtc_ips":      rec.WebRTCIPs,
 		"resolver_ips":    rec.ResolverIPs,
@@ -931,6 +1110,7 @@ func (a *App) handleAdminDetail(w http.ResponseWriter, r *http.Request) {
 		"longitude":       rec.Longitude,
 		"location_acc":    rec.LocationAcc,
 		"location_error":  rec.LocationErr,
+		"location_addr":   locAddr,
 		"has_photo":       rec.HasPhoto,
 		"photo_url":       photoURL(rec),
 		"user_agent":      rec.UserAgent,

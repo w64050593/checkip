@@ -26,7 +26,7 @@
   .tb button { font:inherit; border:0; background:#4f46e5; color:#fff; padding:9px 16px; border-radius:8px; cursor:pointer; min-height:40px; }
   .tb button.ghost { background:#e5e7eb; color:#374151; }
   .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  table { width:100%; border-collapse:collapse; min-width:680px; }
+  table { width:100%; border-collapse:collapse; min-width:960px; }
   th, td { text-align:left; padding:9px 10px; border-bottom:1px solid #eef1f6; vertical-align:top; white-space:nowrap; }
   th { font-size:12px; color:#6b7280; font-weight:600; position:sticky; top:0; background:#fff; }
   tr.clickable { cursor:pointer; }
@@ -38,6 +38,9 @@
   .tag.warn { background:#fef3c7; color:#92400e; }
   .tag.ok { background:#dcfce7; color:#166534; }
   .mismatch { background:#fef3c7 !important; color:#92400e !important; }
+  .del { font:inherit; border:0; background:#fee2e2; color:#b91c1c; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:12px; min-height:32px; }
+  .del:hover { background:#fecaca; }
+  .addr { font-size:11px; color:#374151; }
   .empty { color:#9ca3af; text-align:center; padding:30px 0; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px 18px; }
   img.photo { width:100%; max-width:300px; border-radius:8px; }
@@ -78,10 +81,10 @@
         <table>
           <thead>
             <tr>
-              <th>时间</th><th>公网IP</th><th>WebRTC</th><th>DNS解析</th><th>第三方</th><th>定位</th><th>照片</th>
+              <th>时间</th><th>公网IP</th><th>IP地址备注</th><th>WebRTC</th><th>DNS解析</th><th>第三方</th><th>定位</th><th>坐标地址</th><th>照片</th><th>操作</th>
             </tr>
           </thead>
-          <tbody id="rows"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+          <tbody id="rows"><tr><td colspan="10" class="empty">加载中…</td></tr></tbody>
         </table>
       </div>
       <div class="small" style="margin-top:8px" id="pageInfo"></div>
@@ -121,14 +124,14 @@
       const j = await r.json();
       render(j.records || [], j.total || 0);
     } catch (e) {
-      $("rows").innerHTML = `<tr><td colspan="7" class="empty">加载失败</td></tr>`;
+      $("rows").innerHTML = `<tr><td colspan="10" class="empty">加载失败</td></tr>`;
     }
   }
 
   function render(records, total) {
     const tbody = $("rows");
     if (!records.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="empty">无记录</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="empty">无记录</td></tr>`;
       $("pageInfo").textContent = "";
       return;
     }
@@ -137,14 +140,19 @@
       const loc = (r.latitude || r.longitude) ? `${r.latitude.toFixed(4)}, ${r.longitude.toFixed(4)}` : "—";
       const photo = r.has_photo ? `<a href="${r.photo_url}" target="_blank"><span class="tag ok">有</span></a>` : `<span class="tag">无</span>`;
       const mismatch = isMismatch(r) ? "mismatch" : "";
+      const ipAddr = r.public_ip_addr ? `<span class="addr">${r.public_ip_addr}</span>` : `<span class="small">—</span>`;
+      const locAddr = r.location_addr ? `<span class="addr">${r.location_addr}</span>` : `<span class="small">—</span>`;
       return `<tr class="clickable ${r.session_id===activeSession?'active':''}" onclick="selectRow('${r.session_id}')">
         <td class="small">${t}</td>
         <td><span class="pill ${mismatch}">${r.public_ip||'—'}</span></td>
+        <td>${ipAddr}</td>
         <td class="small">${(r.webrtc_ips||[]).join('<br>')||'—'}</td>
         <td class="small">${(r.resolver_ips||[]).join('<br>')||'—'}</td>
         <td class="small">${(r.external_ips||[]).join('<br>')||'—'}</td>
         <td class="small">${loc}</td>
+        <td>${locAddr}</td>
         <td>${photo}</td>
+        <td><button class="del" onclick="delRec(event,'${r.session_id}')">删除</button></td>
       </tr>`;
     }).join("");
     $("pageInfo").textContent = `共 ${total} 条记录（显示最近 ${records.length} 条）`;
@@ -175,22 +183,41 @@
           <div><div class="small">会话ID</div><span class="pill">${j.session_id}</span></div>
           <div><div class="small">创建时间</div>${t(j.created_at)}</div>
           <div><div class="small">公网IP（服务器视角）</div><span class="pill">${j.public_ip||'—'}</span></div>
+          <div><div class="small">IP地址备注</div><span class="addr">${j.public_ip_addr||'—'}</span></div>
           <div><div class="small">X-Forwarded-For</div><span class="pill">${j.x_forwarded_for||'—'}</span></div>
           <div><div class="small">WebRTC 本地IP</div>${(j.webrtc_ips||[]).map(x=>`<span class="pill">${x}</span>`).join(' ')||'—'}</div>
           <div><div class="small">DNS解析路径IP</div>${(j.resolver_ips||[]).map(x=>`<span class="pill">${x}</span>`).join(' ')||'—'}</div>
           <div><div class="small">第三方回溯IP</div>${(j.external_ips||[]).map(x=>`<span class="pill">${x}</span>`).join(' ')||'—'}</div>
           <div><div class="small">伪装判定</div>${warn}</div>
           <div><div class="small">定位</div>${(j.latitude||j.longitude)?`${j.latitude}, ${j.longitude} (±${j.location_acc?Math.round(j.location_acc):0}m)`:'—'} ${j.location_error?`<span class="tag warn">${j.location_error}</span>`:''}</div>
+          <div><div class="small">坐标地址</div><span class="addr">${j.location_addr||'—'}</span></div>
           <div><div class="small">UA</div><span class="small">${j.user_agent||'—'}</span></div>
           <div><div class="small">语言/时区</div>${j.language||'—'} / ${j.timezone||'—'}</div>
           <div><div class="small">屏幕</div>${j.screen||'—'}</div>
           <div><div class="small">DNS Token</div><span class="pill">${j.dns_token||'—'}</span></div>
         </div>
         ${j.has_photo ? `<div style="margin-top:10px"><div class="small">摄像头照片</div><img class="photo" src="${j.photo_url}"></div>` : '<div class="small" style="margin-top:10px">无照片</div>'}
+        <div style="margin-top:12px"><button class="del" onclick="delRec(event,'${j.session_id}')" style="width:100%">删除该记录</button></div>
       `;
     } catch (e) {
       $("detail").innerHTML = `<div class="empty">详情加载失败</div>`;
     }
+  };
+
+  // 删除记录：确认后调用 DELETE API，刷新列表；失败不阻塞
+  window.delRec = async (ev, sid) => {
+    ev.stopPropagation();
+    if (!confirm("确认删除该访问记录？照片也将一并删除。")) return;
+    try {
+      const r = await api("/api/admin/records/" + encodeURIComponent(sid), { method: "DELETE" });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.ok) {
+        if (activeSession === sid) { activeSession = null; $("detail").innerHTML = `<div class="empty">已删除</div>`; }
+        load();
+      } else {
+        alert(j.error || "删除失败");
+      }
+    } catch (e) { alert("网络错误，删除失败"); }
   };
 
   window.reset = () => {
