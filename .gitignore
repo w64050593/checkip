@@ -1,0 +1,13 @@
+# build artifact
+/ipcollector
+/ipcollector_race
+*.exe
+
+# runtime data (collected records & photos)
+/data/
+
+# logs & temp
+*.log
+*.tmp
+*.bak
+.DS_Store

